@@ -3,7 +3,7 @@
 import { BigNumber, BigNumberish } from "@ethersproject/bignumber";
 import { BytesLike, isHexString } from "@ethersproject/bytes";
 import { Network } from "@ethersproject/networks";
-import { Deferrable, Description, defineReadOnly } from "@ethersproject/properties";
+import { Deferrable, Description, defineReadOnly, resolveProperties } from "@ethersproject/properties";
 import { AccessListish, Transaction } from "@ethersproject/transactions";
 import { OnceBlockable } from "@ethersproject/web";
 
@@ -29,6 +29,9 @@ export type TransactionRequest = {
 
     type?: number;
     accessList?: AccessListish;
+
+    maxPriorityFeePerGas?: BigNumberish;
+    maxFeePerGas?: BigNumberish;
 }
 
 export interface TransactionResponse extends Transaction {
@@ -67,6 +70,8 @@ interface _Block {
 
     miner: string;
     extraData: string;
+
+    baseFee?: null | BigNumber;
 }
 
 export interface Block extends _Block {
@@ -111,6 +116,12 @@ export interface TransactionReceipt {
     byzantium: boolean,
     status?: number
 };
+
+export interface FeeData {
+    maxFeePerGas: null | BigNumber;
+    maxPriorityFeePerGas: null | BigNumber;
+    gasPrice: null | BigNumber;
+}
 
 export interface EventFilter {
     address?: string;
@@ -206,7 +217,6 @@ export type Listener = (...args: Array<any>) => void;
 
 ///////////////////////////////
 // Exported Abstracts
-
 export abstract class Provider implements OnceBlockable {
 
     // Network
@@ -215,6 +225,28 @@ export abstract class Provider implements OnceBlockable {
     // Latest State
     abstract getBlockNumber(): Promise<number>;
     abstract getGasPrice(): Promise<BigNumber>;
+    async getFeeData(): Promise<FeeData> {
+        const { block, gasPrice } = await resolveProperties({
+            block: this.getBlock("latest"),
+            gasPrice: this.getGasPrice().catch((error) => {
+                // @TODO: Why is this now failing on Calaveras?
+                //console.log(error);
+                return null;
+            })
+        });
+
+        let maxFeePerGas = null, maxPriorityFeePerGas = null;
+
+        if (block && block.baseFee) {
+            // We may want to compute this more accurately in the future,
+            // using the formula "check if the base fee is correct".
+            // See: https://eips.ethereum.org/EIPS/eip-1559
+            maxPriorityFeePerGas = BigNumber.from("1000000000");
+            maxFeePerGas = block.baseFee.mul(2).add(maxPriorityFeePerGas);
+        }
+
+        return { maxFeePerGas, maxPriorityFeePerGas, gasPrice };
+    }
 
     // Account
     abstract getBalance(addressOrName: string | Promise<string>, blockTag?: BlockTag | Promise<BlockTag>): Promise<BigNumber>;
